@@ -41,6 +41,13 @@ Include low-signal results as well:
 ./rank_strings.py /path/to/binary --show-low
 ```
 
+Add custom boost words (repeat the option, or pass multiple values with separators):
+
+```bash
+./rank_strings.py /path/to/binary --add-custom developer --add-custom unlock
+./rank_strings.py /path/to/binary --add-custom "developer,unlock|maintenance;ops"
+```
+
 Example:
 
 ```bash
@@ -87,6 +94,8 @@ These features add score:
   - `help`
   - `fail`
   - `success`
+- Custom boost keywords from `--add-custom`
+  - You can repeat `--add-custom` and/or separate multiple values with `,`, `;`, or `|`.
 - Sentence-like text
   - Prompts, errors, banners, and status messages are often more useful than isolated words.
 - Path-like strings

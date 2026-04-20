@@ -36,6 +36,8 @@ HIGH_SIGNAL_KEYWORDS = {
     "tmp": 5,
 }
 
+CUSTOM_KEYWORD_WEIGHT = 10
+
 LOW_SIGNAL_PATTERNS = [
     (re.compile(r"^_ZN"), 18, "mangled symbol"),
     (re.compile(r"(core::|alloc::|std::|tokio::|serde::|hashbrown::)"), 12, "runtime/library namespace"),
@@ -61,6 +63,22 @@ class RankedString:
     offset: int
     text: str
     reasons: list[str]
+
+
+def parse_custom_keywords(values: list[str] | None) -> list[str]:
+    if not values:
+        return []
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        for part in re.split(r"[,;|]", value):
+            token = part.strip().lower()
+            if not token or token in seen:
+                continue
+            seen.add(token)
+            keywords.append(token)
+    return keywords
 
 
 def run_strings(target: str, min_length: int) -> list[tuple[int, str]]:
@@ -89,7 +107,7 @@ def run_strings(target: str, min_length: int) -> list[tuple[int, str]]:
     return out
 
 
-def score_string(text: str) -> tuple[int, list[str]]:
+def score_string(text: str, custom_keywords: list[str] | None = None) -> tuple[int, list[str]]:
     score = 0
     reasons: list[str] = []
     lower = text.lower()
@@ -98,6 +116,11 @@ def score_string(text: str) -> tuple[int, list[str]]:
         if word in lower:
             score += weight
             reasons.append(f"keyword:{word}")
+
+    for word in custom_keywords or []:
+        if word in lower:
+            score += CUSTOM_KEYWORD_WEIGHT
+            reasons.append(f"custom:{word}")
 
     for pattern, weight, reason in USER_FACING_PATTERNS:
         if pattern.search(text):
@@ -187,11 +210,22 @@ def main() -> None:
         action="store_true",
         help="Include low-signal results in the output",
     )
+    parser.add_argument(
+        "--add-custom",
+        action="append",
+        default=[],
+        metavar="WORDS",
+        help=(
+            "Boost strings containing custom words; repeat option or separate "
+            "multiple values with ',', ';', or '|'"
+        ),
+    )
     args = parser.parse_args()
+    custom_keywords = parse_custom_keywords(args.add_custom)
 
     ranked: list[RankedString] = []
     for offset, text in run_strings(args.target, args.min_length):
-        score, reasons = score_string(text)
+        score, reasons = score_string(text, custom_keywords)
         ranked.append(RankedString(score=score, offset=offset, text=text, reasons=reasons))
 
     ranked.sort(key=lambda item: (-item.score, item.offset, item.text))
