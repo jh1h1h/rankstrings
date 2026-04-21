@@ -1,89 +1,139 @@
-# `rank_strings.py`
+# `rank_re.py`
 
-`rank_strings.py` is a small helper for reversing workflows. It runs `strings` against a target file, scores each extracted string with a few heuristics, and prints the most promising candidates first.
+`rank_re.py` is a reversing helper that ranks two kinds of output:
 
-The goal is not to replace manual analysis. The goal is to move likely high-signal strings such as prompts, hidden mode names, token/auth text, file paths, and output messages above runtime noise and debug junk.
+- `strings`
+- `nm -C`
+
+It is designed to push likely high-signal clues such as prompts, hidden mode names, verifier-related functions, file/process handlers, and output artifacts above standard library noise and runtime junk.
+
+There is also a compatibility wrapper:
+
+- `rank_strings.py`
+
+If you run `rank_strings.py` without a subcommand, it behaves like:
+
+```bash
+./rank_re.py strings <target>
+```
 
 ## Requirements
 
 - Python 3
-- GNU or compatible `strings`
+- `strings`
+- `nm`
 
-## Usage
+## Modes
 
-Basic run:
+### `strings`
+
+Ranks `strings -t x` output.
 
 ```bash
-./rank_strings.py /path/to/binary
+./rank_re.py strings /path/to/binary
 ```
 
-Show more results:
+### `nm`
+
+Ranks `nm -n -C` output.
+
+By default it also runs a lightweight `strings` prepass first and uses that to boost related symbol names.
 
 ```bash
-./rank_strings.py /path/to/binary --limit 80
+./rank_re.py nm /path/to/binary
 ```
 
-Only show stronger candidates:
+Disable the automatic `strings` prepass:
 
 ```bash
-./rank_strings.py /path/to/binary --min-score 20
+./rank_re.py nm /path/to/binary --no-strings-context
 ```
 
-Change the minimum string length passed to `strings`:
+### `both`
+
+Prints ranked `strings` first, then ranked `nm` output with cross-signal context enabled.
 
 ```bash
-./rank_strings.py /path/to/binary --min-length 6
+./rank_re.py both /path/to/binary
 ```
 
-Include low-signal results as well:
+## Common Options
+
+Show more or fewer results:
 
 ```bash
-./rank_strings.py /path/to/binary --show-low
+./rank_re.py strings /path/to/binary --limit 80
 ```
 
-Add custom boost words (repeat the option, or pass multiple values with separators):
+Only show stronger results:
 
 ```bash
-./rank_strings.py /path/to/binary --add-custom developer --add-custom unlock
-./rank_strings.py /path/to/binary --add-custom "developer,unlock|maintenance;ops"
+./rank_re.py nm /path/to/binary --min-score 20
 ```
 
-Example:
+Include low-signal results too:
 
 ```bash
-./rank_strings.py /home/jh1h1h/Downloads/DSO_Challenge/crabby-repair --limit 20
+./rank_re.py both /path/to/binary --show-low
+```
+
+Boost custom words:
+
+```bash
+./rank_re.py strings /path/to/binary --add-custom verifier,secret,payload
+./rank_re.py nm /path/to/binary --add-custom verifier --add-custom payload
+```
+
+Adjust the minimum string length used by `strings`:
+
+```bash
+./rank_re.py strings /path/to/binary --min-length 6
+./rank_re.py nm /path/to/binary --min-length 6
 ```
 
 ## Output Format
 
-Each result is printed like this:
+### Strings Mode
 
 ```text
  46  high    0xd11d  Authenticating Developer Token ...
-      reasons: keyword:developer, keyword:token, keyword:auth, sentence-like text, contains spaces
+      reasons: keyword:developer, keyword:token, keyword:auth, sentence-like text
 ```
 
 Fields:
 
-- `46`: the numeric score
-- `high`: the score bucket
-- `0xd11d`: the string offset reported by `strings -t x`
-- the string text itself
-- `reasons`: the main heuristic reasons that increased or decreased the score
+- score
+- score bucket
+- string offset from `strings -t x`
+- string text
+- the main reasons that increased or decreased the score
 
-The offset is important because it lets you correlate the string with nearby code in `objdump`, `radare2`, `ghidra`, or another disassembler.
+### NM Mode
 
-## How Ranking Works
+```text
+ 35  high    0xc7950  t  crabby_repair::verify::verify
+      reasons: keyword:verify, keyword:auth, code symbol, non-stdlib namespace
+```
 
-The script uses a simple additive scoring model. It does not try to understand the whole program. It just favors strings that tend to be useful during reversing.
+Fields:
 
-### Factors That Push Strings Higher
+- score
+- score bucket
+- symbol address from `nm -n -C`
+- symbol type
+- demangled symbol name
+- the main reasons that increased or decreased the score
 
-These features add score:
+## How Strings Are Ranked
+
+Strings get pushed higher when they look like useful reversing clues.
+
+### Positive Factors
 
 - High-signal keywords such as:
   - `developer`
   - `debug`
+  - `hidden`
   - `flag`
   - `token`
   - `auth`
@@ -94,136 +144,168 @@ These features add score:
   - `help`
   - `fail`
   - `success`
-- Custom boost keywords from `--add-custom`
-  - You can repeat `--add-custom` and/or separate multiple values with `,`, `;`, or `|`.
 - Sentence-like text
-  - Prompts, errors, banners, and status messages are often more useful than isolated words.
-- Path-like strings
-  - Examples: `/tmp/foo`, `/usr/bin/...`, `C:\...`
+- Path-like text
 - Environment-variable-like tokens
-  - Examples: `TMPDIR`, `CRYPTIFY_KEY`
 - Strings with spaces
-  - Human-facing prompts and messages often contain spaces.
-- Useful lengths
-  - Very short strings are often ambiguous. Moderately long descriptive strings are often better clues.
-- Structured text
-  - Strings containing `=` or `:` are often configuration text, prompts, or messages.
-- Message punctuation
-  - `...`, `?`, `!` and similar markers often show user-facing output.
-- Human-sized messages
-  - Medium-length strings are often better than giant concatenated blobs.
+- Descriptive length
+- Structured text such as `foo: bar`
+- Message punctuation such as `...` or `?`
+- Human-sized messages rather than huge concatenated blobs
+- Any custom keywords you pass with `--add-custom`
 
-### Factors That Push Strings Lower
+### Negative Factors
 
-These features reduce score:
+- Rust mangled symbol text
+- `core::`, `alloc::`, `std::`, and similar runtime noise
+- GLIBC/toolchain markers
+- debug-section noise such as `/usr/lib/debug` and `.debug_*`
+- panic/backtrace/runtime-error text
+- very short strings
+- oversized concatenated blobs
+- repetitive low-information strings
+- opaque hex-like or base64-like blobs
+- symbol-like all-caps noise without spaces
 
-- Rust mangled symbols
-  - Example: strings beginning with `_ZN...`
-- Standard library and runtime namespaces
-  - `core::`, `alloc::`, `std::`, `tokio::`, `serde::`, and similar
-- Toolchain/runtime markers
-  - `GLIBC_`, `ld-linux`, `libc.so`, and related noise
-- Debug-section noise
-  - `/usr/lib/debug`, `.debug_*`, `gnu_debuglink`
-- Panic and runtime text
-  - `panicked at`, `stack backtrace`, `fatal runtime error`, `RUST_BACKTRACE`
-- Very short tokens
-  - These are often too ambiguous to be useful on their own.
-- Oversized concatenated blobs
-  - Large multi-message chunks often come from packed rodata or debug content and are harder to act on directly.
-- Repetitive strings
-  - Very low-information content gets penalized.
-- Opaque hex or base64-like blobs
-  - These may still matter, but usually they are worse first targets than prompts or filenames.
-- Symbol-like all-caps noise without spaces
-  - Often library or runtime internals rather than intended challenge clues.
+## How NM Symbols Are Ranked
 
-## Why Offsets Matter
+`nm` ranking is more function-oriented.
 
-The script keeps the offset from `strings -t x` on purpose.
+### Positive Factors
 
-Once a string looks interesting, a common next step is:
+- Function names containing likely control-flow words:
+  - `main`
+  - `mode`
+  - `command`
+  - `dispatch`
+  - `handle`
+- Gate/validation words:
+  - `verify`
+  - `check`
+  - `auth`
+  - `validate`
+  - `token`
+  - `key`
+- Side-effect words:
+  - `read`
+  - `write`
+  - `open`
+  - `create`
+  - `exec`
+  - `run`
+  - `spawn`
+  - `launch`
+- Transformation words:
+  - `construct`
+  - `encode`
+  - `decode`
+  - `mix`
+  - `parse`
+  - `process`
+- Code symbol types like `T`, `t`, `W`, `w`
+- Non-stdlib namespaces
+- Custom keywords from `--add-custom`
 
-```bash
-objdump -d <target> | less
-```
+### Negative Factors
 
-or:
+- `drop_in_place`
+- `core::`, `alloc::`, `std::`
+- formatting, panicking, backtrace, unwind, lang-start helpers
+- iterator/collection glue
+- closure-heavy generic names
+- very large symbol names
 
-```bash
-objdump -s --start-address=<offset-nearby> --stop-address=<offset-nearby> <target>
-```
+## Cross-Signal Ranking
 
-Then search for the relevant area and look for:
+This is the main reason the tool was combined instead of keeping separate unrelated scripts.
 
-- references to that rodata
-- nearby success and failure messages
-- calls into verifier or mode-handling functions
-- file names, paths, or environment variables tied to the same region
+`nm` mode can use a `strings` prepass to improve symbol ranking.
 
-## What The Script Is Good At
+The idea:
 
-- Surfacing likely prompts and menu text
-- Highlighting auth/token/flag-related strings
-- Surfacing hidden mode names and developer/debug clues
-- Promoting path names and environment-variable names
-- Pushing obvious Rust runtime junk lower
+1. Run `strings`
+2. Take the top-ranked strings
+3. Extract high-signal keywords and concepts
+4. Boost symbol names that match those concepts
 
-## What The Script Is Not Good At
+Example:
 
-- It does not prove that a top-ranked string is important.
-- It does not decompile or trace control flow.
-- It does not understand context across nearby strings.
-- It may still rank some runtime text too highly.
-- It may rank a real clue too low if it does not match the current heuristics.
+If top strings include:
 
-Treat the output as a prioritization aid, not as ground truth.
+- `Authenticating Developer Token ...`
+- `Running Utility in Developer Mode ...`
+- `Token Authenticated`
+
+then the script learns that concepts such as:
+
+- auth
+- hidden mode
+- token
+- developer
+
+matter for this file.
+
+That means symbols such as:
+
+- `verify`
+- `check`
+- `auth`
+- `dev_mode_enabled`
+- `command`
+
+get extra weight in `nm` mode.
+
+This is what “cross-signal ranking” means:
+
+- one source of evidence influences how another source is ranked
+
+## Failure Handling
+
+The tool is designed to fail cleanly.
+
+Examples:
+
+- if `strings` fails in `strings` mode:
+  - it prints `strings failed on this file`
+- if `nm` fails in `nm` mode:
+  - it prints `nm failed on this file`
+- if the automatic strings prepass fails in `nm` mode:
+  - it prints a note and still ranks `nm` output without string context
+
+This is useful for unusual file formats, stripped or incompatible targets, or files where only one tool is informative.
 
 ## Recommended Workflow
 
-One practical workflow is:
-
-1. Run the scorer.
-2. Take the top 10-20 strings.
-3. Ignore obvious runtime/debug/toolchain noise.
-4. Focus on:
-   - prompts
-   - hidden commands
-   - token/auth strings
-   - file paths
-   - output artifact names
-5. Correlate those strings with:
-   - `file <target>`
-   - `./<target>`
-   - `nm -C <target>`
-   - `objdump -d --start-address=<start> --stop-address=<stop> <target>`
-
-For example:
+Start broad:
 
 ```bash
-./rank_strings.py <target> --limit 20
-nm -C <target> | rg 'main|mode|command|verify|auth|debug|dev'
+./rank_re.py both <target> --limit 20
+```
+
+Then use the top results to guide manual inspection:
+
+```bash
+./<target>
+nm -n -C <target> | rg 'main|mode|command|verify|check|auth|debug|dev'
 objdump -d --start-address=<start> --stop-address=<stop> <target>
 ```
 
-## Extending The Heuristics
+Use `strings` results to prioritize:
 
-If you want to tune the ranking, edit these sections in the script:
+- prompts
+- hidden modes
+- token/auth text
+- file paths
+- artifact names
 
-- `HIGH_SIGNAL_KEYWORDS`
-- `LOW_SIGNAL_PATTERNS`
-- `USER_FACING_PATTERNS`
-- `score_string()`
+Use `nm` results to prioritize:
 
-The easiest customization points are:
+- dispatchers
+- gates/verifiers
+- file/process functions
+- transforms
 
-- add challenge-specific keywords
-- penalize additional runtime namespaces
-- increase or decrease the score of path-like strings
-- change the thresholds used for `high`, `medium`, and `low`
+## Files
 
-## Notes
-
-- The script shells out to `strings`, so behavior depends in part on the local `strings` implementation.
-- The output is most useful on executables and mixed binary blobs, but it can also be used on other file types.
-- For stripped Rust binaries, the script is often most valuable when paired with runtime testing and small-slice disassembly.
+- [rank_re.py](/home/jh1h1h/Downloads/rank_re.py)
+- [rank_strings.py](/home/jh1h1h/Downloads/rank_strings.py)
