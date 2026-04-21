@@ -101,7 +101,7 @@ Fields:
 ### NM Mode
 
 ```text
- 35  high    0xc7950  t  crabby_repair::verify::verify
+ 35  high    0xc7950-0xc7a70  t  crabby_repair::verify::verify
       reasons: keyword:verify, keyword:auth, code symbol, non-stdlib namespace
 ```
 
@@ -109,10 +109,12 @@ Fields:
 
 - score
 - score bucket
-- symbol address from `nm -n -C`
+- estimated symbol range from `nm -n -C`
 - symbol type
 - demangled symbol name
 - the main reasons that increased or decreased the score
+
+The `stop` address is estimated as the next symbol address in `nm -n -C` output. This is usually a good first guess for `objdump --stop-address`, but it is not guaranteed to be the true logical end of a function.
 
 ## How Strings Are Ranked
 
@@ -299,3 +301,63 @@ Use `nm` results to prioritize:
 
 - [rank_re.py](/home/jh1h1h/Downloads/rank_re.py)
 - [rank_strings.py](/home/jh1h1h/Downloads/rank_strings.py)
+
+## Tests
+
+There is a fixture-driven regression harness at:
+
+- [test_rank_re.py](/home/jh1h1h/Downloads/test_rank_re.py)
+
+The default fixtures live in:
+
+- [/home/jh1h1h/Downloads/test-files](/home/jh1h1h/Downloads/test-files)
+
+Run the tests like this:
+
+```bash
+python3 /home/jh1h1h/Downloads/test_rank_re.py --fixtures-dir /home/jh1h1h/Downloads/test-files --limit 8
+```
+
+What the test harness does:
+
+- runs the same ranking logic used by `rank_re.py`
+- prints the top-ranked strings and symbols for each fixture
+- reports where known useful strings and symbols landed in the ranking
+- fails only on expectations marked as enforced in the fixture JSON
+
+### Adding A New Test Binary
+
+1. Copy the binary into:
+
+```bash
+/home/jh1h1h/Downloads/test-files/
+```
+
+2. Add a matching fixture JSON in the same directory.
+
+3. Re-run:
+
+```bash
+python3 /home/jh1h1h/Downloads/test_rank_re.py --fixtures-dir /home/jh1h1h/Downloads/test-files
+```
+
+### Fixture Format
+
+Use [crabby-repair.json](/home/jh1h1h/Downloads/test-files/crabby-repair.json) as a template.
+
+Each fixture can define:
+
+- `target`
+- `min_length`
+- `context_limit`
+- `custom_keywords`
+- `expected_strings`
+- `expected_symbols`
+
+Each expected string or symbol entry can define:
+
+- `contains`
+- `max_rank`
+- optional `enforce: false`
+
+If `enforce` is omitted, it defaults to `true`.
