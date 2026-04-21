@@ -7,16 +7,6 @@
 
 It is designed to push likely high-signal clues such as prompts, hidden mode names, verifier-related functions, file/process handlers, and output artifacts above standard library noise and runtime junk.
 
-There is also a compatibility wrapper:
-
-- `rank_strings.py`
-
-If you run `rank_strings.py` without a subcommand, it behaves like:
-
-```bash
-./rank_re.py strings <target>
-```
-
 ## Requirements
 
 - Python 3
