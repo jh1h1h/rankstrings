@@ -1,0 +1,45 @@
+{
+  "target": "crabby-repair",
+  "min_length": 4,
+  "context_limit": 20,
+  "custom_keywords": [],
+  "expected_strings": [
+    {
+      "contains": "Authenticating Developer Token",
+      "max_rank": 10
+    },
+    {
+      "contains": "Token Authenticated",
+      "max_rank": 10
+    },
+    {
+      "contains": "Running Utility in Developer Mode",
+      "max_rank": 20
+    },
+    {
+      "contains": "Dev Mode Operations Complete",
+      "max_rank": 30
+    }
+  ],
+  "expected_symbols": [
+    {
+      "contains": "crabby_repair::verify::verify",
+      "max_rank": 40,
+      "enforce": false
+    },
+    {
+      "contains": "crabby_repair::modes::dev_mode_enabled",
+      "max_rank": 20
+    },
+    {
+      "contains": "crabby_repair::enc::mix",
+      "max_rank": 35,
+      "enforce": false
+    },
+    {
+      "contains": "crabby_repair::enc::construct",
+      "max_rank": 35,
+      "enforce": false
+    }
+  ]
+}
